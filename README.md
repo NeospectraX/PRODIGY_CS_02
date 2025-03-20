@@ -38,7 +38,7 @@ An advanced Python-based tool for securing images through encryption and stegano
 
 1. **Clone the Repository:**
 ```bash
-git clone https://github.com/your-username/pixel-encryption-tool.git
+git clone https://github.com/NeospectraX/PRODIGY_CS_02.git
 cd pixel-encryption-tool
 ```
 
