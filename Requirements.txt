@@ -1,0 +1,4 @@
+numpy>=1.24.0
+opencv-python>=4.8.0
+pycryptodome>=3.18.0
+rich>=13.5.0
