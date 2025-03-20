@@ -20,10 +20,8 @@ try:
     RICH_AVAILABLE = True
 except ImportError:
     RICH_AVAILABLE = False
-    # Fallback print function
     class FallbackConsole:
         def print(self, text):
-            # Remove rich formatting
             text = text.replace("[bold red]", "").replace("[/bold red]", "")
             text = text.replace("[bold green]", "").replace("[/bold green]", "")
             text = text.replace("[bold yellow]", "").replace("[/bold yellow]", "")
@@ -36,7 +34,6 @@ except ImportError:
             print(text)
         
         def input(self, prompt):
-            # Remove rich formatting
             prompt = prompt.replace("[bold magenta]", "").replace("[/bold magenta]", "")
             prompt = prompt.replace("[bold cyan]", "").replace("[/bold cyan]", "")
             return input(prompt)
@@ -78,28 +75,23 @@ def check_dependencies():
         
         if all_installed:
             print("All dependencies installed. Restarting script...")
-            # Fix: Use the correct path for restart
             script_path = os.path.abspath(sys.argv[0])
             os.execv(sys.executable, [sys.executable, script_path])
         else:
             print("Failed to install all dependencies. Please install them manually.")
             sys.exit(1)
 
-# Run dependency check
 check_dependencies()
 
 def arnold_cat_map(img, iterations, key):
     """Apply Arnold Cat Map for image scrambling"""
     h, w = img.shape[0], img.shape[1]
-    
-    # Create a copy to avoid modifying the original
     result = np.copy(img)
     
     for _ in range(iterations):
         temp = np.copy(result)
         for y in range(h):
             for x in range(w):
-                # Modified Arnold Cat Map with key parameter
                 new_x = (x + key * y) % w
                 new_y = (x + (key + 1) * y) % h
                 result[new_y, new_x] = temp[y, x]
@@ -109,15 +101,12 @@ def arnold_cat_map(img, iterations, key):
 def inverse_arnold_cat_map(img, iterations, key):
     """Apply inverse Arnold Cat Map to unscramble the image"""
     h, w = img.shape[0], img.shape[1]
-    
-    # Create a copy to avoid modifying the original
     result = np.copy(img)
     
     for _ in range(iterations):
         temp = np.copy(result)
         for y in range(h):
             for x in range(w):
-                # Inverse transformation of Arnold Cat Map with key
                 det = (key + 1) - key * 1
                 inv_x = ((key + 1) * x - key * y) % w
                 inv_y = (-1 * x + y) % h
@@ -132,24 +121,18 @@ def derive_key(key_str, size=32):
 def encrypt_image(img, key_str, iterations):
     """Main encryption function"""
     try:
-        # Ensure image is the right shape and type
-        if len(img.shape) == 3 and img.shape[2] == 4:  # Has alpha channel
+        if len(img.shape) == 3 and img.shape[2] == 4:
             img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
             
-        # Derive a cryptographic key from the string
         key = derive_key(key_str)
-        key_int = int.from_bytes(key[:4], 'big') % 8 + 1  # Key for Arnold map (1-8)
+        key_int = int.from_bytes(key[:4], 'big') % 8 + 1
         
-        # Step 1: Apply Arnold Cat Map scrambling
         scrambled = arnold_cat_map(img, iterations, key_int)
-        
-        # Step 2: Convert image to bytes and encrypt with AES
         img_bytes = pickle.dumps((scrambled.shape, scrambled.dtype, scrambled.tobytes()))
         iv = get_random_bytes(16)
         cipher = AES.new(key, AES.MODE_CBC, iv)
         encrypted_bytes = iv + cipher.encrypt(pad(img_bytes, AES.block_size))
         
-        # Step 3: Store encryption metadata
         metadata = {
             'shape': img.shape,
             'encrypted': True,
@@ -157,20 +140,15 @@ def encrypt_image(img, key_str, iterations):
             'iterations': iterations
         }
         
-        # Step 4: Create output array
         meta_bytes = pickle.dumps(metadata)
-        
-        # Step 5: Combine metadata and encrypted image
         output = base64.b64encode(len(meta_bytes).to_bytes(4, 'big') + meta_bytes + encrypted_bytes)
         output_array = np.frombuffer(output, dtype=np.uint8)
         
-        # Reshape to something that can be saved as an image
         sqrt_size = int(np.ceil(np.sqrt(len(output_array))))
         padding = sqrt_size * sqrt_size - len(output_array)
         padded_array = np.pad(output_array, (0, padding), 'constant')
         output_img = padded_array.reshape(sqrt_size, sqrt_size)
         
-        # Make it 3-channel for saving as color image
         if len(output_img.shape) == 2:
             output_img = cv2.cvtColor(output_img, cv2.COLOR_GRAY2BGR)
             
@@ -185,15 +163,10 @@ def encrypt_image(img, key_str, iterations):
 def decrypt_image(img, key_str, iterations):
     """Main decryption function"""
     try:
-        # Extract the bytes from the image
         img_flat = img.flatten()
-        
-        # Handle grayscale images
         if len(img.shape) == 3 and img.shape[2] == 3:
-            # Convert to grayscale bytes (take only one channel)
             img_flat = img[:,:,0].flatten()
         
-        # Remove padding zeros
         nonzero_indices = np.nonzero(img_flat)[0]
         if len(nonzero_indices) == 0:
             raise ValueError("Invalid encrypted image - no data found")
@@ -201,42 +174,30 @@ def decrypt_image(img, key_str, iterations):
         last_nonzero = nonzero_indices[-1]
         img_flat = img_flat[:last_nonzero+1]
         
-        # Base64 decode the data
         try:
             decoded_data = base64.b64decode(img_flat)
         except Exception:
             raise ValueError("Not a valid encrypted image")
         
-        # Extract metadata length and metadata
         meta_len = int.from_bytes(decoded_data[:4], 'big')
         metadata = pickle.loads(decoded_data[4:4+meta_len])
         
-        # Verify this is an encrypted image
         if not metadata.get('encrypted', False):
             raise ValueError("Not an encrypted image")
         
-        # Check if the key matches
         key = derive_key(key_str)
         if metadata.get('key_hash') != hashlib.sha256(key_str.encode()).hexdigest()[:8]:
             console.print("Warning: Key hash doesn't match. Decryption may fail.")
         
-        # Extract encrypted image data
         encrypted_bytes = decoded_data[4+meta_len:]
-        
-        # Decrypt the image bytes
         iv = encrypted_bytes[:16]
         ct = encrypted_bytes[16:]
         cipher = AES.new(key, AES.MODE_CBC, iv)
         decrypted_bytes = unpad(cipher.decrypt(ct), AES.block_size)
         
-        # Reconstruct the image
         shape, dtype, img_bytes = pickle.loads(decrypted_bytes)
         scrambled = np.frombuffer(img_bytes, dtype=dtype).reshape(shape)
-        
-        # Derive the same key for Arnold map
         key_int = int.from_bytes(key[:4], 'big') % 8 + 1
-        
-        # Apply inverse Arnold Cat Map to unscramble
         unscrambled = inverse_arnold_cat_map(scrambled, iterations, key_int)
         
         return unscrambled
@@ -247,113 +208,20 @@ def decrypt_image(img, key_str, iterations):
         traceback.print_exc()
         return None
 
-def stego_embed(cover_img, secret_img, key_str, iterations):
-    """Hide one image within another using LSB steganography"""
-    try:
-        # Encrypt the secret image first
-        encrypted_secret, _ = encrypt_image(secret_img, key_str, iterations)
-        if encrypted_secret is None:
-            raise ValueError("Failed to encrypt secret image")
-        
-        # Resize encrypted data to fit within cover if needed
-        if encrypted_secret.size > cover_img.size * 0.9:
-            raise ValueError("Secret image too large for this cover image")
-            
-        # Flatten both images
-        cover_flat = cover_img.flatten()
-        secret_flat = encrypted_secret.flatten()
-        
-        # Prepare bit planes
-        secret_bits = np.unpackbits(secret_flat)
-        
-        # Create a copy of cover image
-        stego_img = cover_img.copy()
-        stego_flat = stego_img.flatten()
-        
-        # Embed secret size at the beginning
-        secret_size = len(secret_bits)
-        size_bits = np.unpackbits(np.array([secret_size], dtype=np.uint32).view(np.uint8))
-        
-        # Embed size bits
-        for i in range(len(size_bits)):
-            if i < len(stego_flat):
-                stego_flat[i] = (stego_flat[i] & 0xFE) | size_bits[i]
-        
-        # Embed secret bits
-        start_idx = len(size_bits)
-        for i in range(len(secret_bits)):
-            if start_idx + i < len(stego_flat):
-                stego_flat[start_idx + i] = (stego_flat[start_idx + i] & 0xFE) | secret_bits[i]
-                
-        return stego_flat.reshape(cover_img.shape)
-        
-    except Exception as e:
-        console.print(f"Steganography embedding error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-def stego_extract(stego_img, key_str, iterations):
-    """Extract and decrypt a hidden image"""
-    try:
-        # Flatten the stego image
-        stego_flat = stego_img.flatten()
-        
-        # Extract the size bits first
-        size_bits = np.bitwise_and(stego_flat[:32], 1)
-        secret_size = np.packbits(size_bits).view(np.uint32)[0]
-        
-        if secret_size > len(stego_flat) * 8:
-            raise ValueError("Invalid secret size detected")
-            
-        # Extract secret bits
-        secret_bits = np.bitwise_and(stego_flat[32:32+secret_size], 1)
-        
-        # Convert bits back to bytes
-        secret_bytes = np.packbits(secret_bits)
-        
-        # Reshape into an image
-        sqrt_size = int(np.ceil(np.sqrt(len(secret_bytes))))
-        padding = sqrt_size * sqrt_size - len(secret_bytes)
-        
-        if padding > 0:
-            secret_bytes = np.pad(secret_bytes, (0, padding), 'constant')
-            
-        secret_img = secret_bytes.reshape(sqrt_size, sqrt_size)
-        
-        # If it's a single channel, convert to 3-channel
-        if len(secret_img.shape) == 2:
-            secret_img = cv2.cvtColor(secret_img, cv2.COLOR_GRAY2BGR)
-            
-        # Decrypt the extracted image
-        decrypted = decrypt_image(secret_img, key_str, iterations)
-        
-        return decrypted
-        
-    except Exception as e:
-        console.print(f"Steganography extraction error: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return None
-
-def process_image(input_path, output_path, key, iterations, mode, secret_path=None):
+def process_image(input_path, output_path, key, iterations, mode):
     """Process images based on mode selection"""
     try:
-        # Validate file extension
         valid_extensions = ['.png', '.jpg', '.jpeg', '.bmp']
         if not any(input_path.lower().endswith(ext) for ext in valid_extensions):
             raise ValueError(f"Unsupported file format. Please use: {', '.join(valid_extensions)}")
 
-        # Validate input path
         if not os.path.exists(input_path):
             raise FileNotFoundError(f"Input file '{input_path}' does not exist")
             
-        # Validate file size
-        file_size = os.path.getsize(input_path) / (1024 * 1024)  # Size in MB
-        if file_size > 100:  # 100MB limit
+        file_size = os.path.getsize(input_path) / (1024 * 1024)
+        if file_size > 100:
             raise ValueError(f"File too large ({file_size:.1f}MB). Maximum size is 100MB")
             
-        # Create output directory if it doesn't exist
         output_dir = os.path.dirname(output_path)
         if output_dir and not os.path.exists(output_dir):
             try:
@@ -361,22 +229,19 @@ def process_image(input_path, output_path, key, iterations, mode, secret_path=No
             except PermissionError:
                 raise PermissionError(f"Unable to create output directory: {output_dir}. Check permissions.")
         
-        # Read the input image
         img = cv2.imread(input_path, cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError(f"Unable to read image '{input_path}'. File may be corrupted or in an unsupported format.")
         
-        # Validate image dimensions
-        max_dimension = 8192  # Maximum allowed dimension
+        max_dimension = 8192
         if img.shape[0] > max_dimension or img.shape[1] > max_dimension:
             raise ValueError(f"Image dimensions too large. Maximum allowed dimension is {max_dimension}px")
 
-        # Process based on selected mode
         if mode == "encrypt":
             if RICH_AVAILABLE:
                 for step in track(range(3), description="Encrypting..."):
                     if step == 0:
-                        time.sleep(0.1)  # Simulate processing
+                        time.sleep(0.1)
                     elif step == 1:
                         encrypted_img, metadata = encrypt_image(img, key, iterations)
                         if encrypted_img is None:
@@ -396,7 +261,7 @@ def process_image(input_path, output_path, key, iterations, mode, secret_path=No
             if RICH_AVAILABLE:
                 for step in track(range(3), description="Decrypting..."):
                     if step == 0:
-                        time.sleep(0.1)  # Simulate processing
+                        time.sleep(0.1)
                     elif step == 1:
                         decrypted_img = decrypt_image(img, key, iterations)
                         if decrypted_img is None:
@@ -409,49 +274,6 @@ def process_image(input_path, output_path, key, iterations, mode, secret_path=No
                 if decrypted_img is None:
                     return False
                 cv2.imwrite(output_path, decrypted_img)
-            
-        elif mode == "stego_embed" and secret_path:
-            if not os.path.exists(secret_path):
-                raise FileNotFoundError(f"Secret file '{secret_path}' does not exist")
-                
-            secret_img = cv2.imread(secret_path, cv2.IMREAD_COLOR)
-            if secret_img is None:
-                raise ValueError(f"Secret image '{secret_path}' not found or invalid format.")
-                
-            if RICH_AVAILABLE:
-                for step in track(range(3), description="Embedding secret..."):
-                    if step == 0:
-                        time.sleep(0.1)  # Simulate processing
-                    elif step == 1:
-                        stego_img = stego_embed(img, secret_img, key, iterations)
-                        if stego_img is None:
-                            return False
-                    else:
-                        cv2.imwrite(output_path, stego_img)
-            else:
-                print("Embedding secret...")
-                stego_img = stego_embed(img, secret_img, key, iterations)
-                if stego_img is None:
-                    return False
-                cv2.imwrite(output_path, stego_img)
-            
-        elif mode == "stego_extract":
-            if RICH_AVAILABLE:
-                for step in track(range(3), description="Extracting secret..."):
-                    if step == 0:
-                        time.sleep(0.1)  # Simulate processing
-                    elif step == 1:
-                        extracted_img = stego_extract(img, key, iterations)
-                        if extracted_img is None:
-                            return False
-                    else:
-                        cv2.imwrite(output_path, extracted_img)
-            else:
-                print("Extracting secret...")
-                extracted_img = stego_extract(img, key, iterations)
-                if extracted_img is None:
-                    return False
-                cv2.imwrite(output_path, extracted_img)
         
         return True
         
@@ -469,7 +291,7 @@ def process_image(input_path, output_path, key, iterations, mode, secret_path=No
         console.print(f"[bold red]OpenCV Error: {str(e)}[/bold red]")
         console.print("[yellow]The image might be corrupted or in an unsupported format.[/yellow]")
     except MemoryError:
-        console.print("[bold red]Memory Error: Not enough memory to process this image.[/bold red]")
+        console.print(f"[bold red]Memory Error: Not enough memory to process this image.[/bold red]")
         console.print("[yellow]Try using a smaller image or closing other applications.[/yellow]")
     except Exception as e:
         console.print(f"[bold red]Unexpected Error: {str(e)}[/bold red]")
@@ -487,14 +309,13 @@ COLOR_GREEN = "\033[32m"
 COLOR_YELLOW = "\033[33m"
 COLOR_BLUE = "\033[34m"
 COLOR_CYAN = "\033[36m"
-COLOR_PURPLE = "\033[95m"  # Neon purple
-COLOR_PINK = "\033[91m"    # Neon pink
-COLOR_BRIGHT_GREEN = "\033[92m"  # Neon green
-COLOR_BRIGHT_YELLOW = "\033[93m"  # Neon yellow
-COLOR_BRIGHT_BLUE = "\033[94m"   # Neon blue
-COLOR_BRIGHT_CYAN = "\033[96m"   # Neon cyan
+COLOR_PURPLE = "\033[95m"
+COLOR_PINK = "\033[91m"
+COLOR_BRIGHT_GREEN = "\033[92m"
+COLOR_BRIGHT_YELLOW = "\033[93m"
+COLOR_BRIGHT_BLUE = "\033[94m"
+COLOR_BRIGHT_CYAN = "\033[96m"
 
-# Enhanced ASCII Banner with Animation
 def display_banner():
     neon_colors = [COLOR_PURPLE, COLOR_PINK, COLOR_BRIGHT_GREEN, COLOR_BRIGHT_YELLOW, COLOR_BRIGHT_BLUE, COLOR_BRIGHT_CYAN]
     banner = f"""
@@ -506,13 +327,11 @@ def display_banner():
 {neon_colors[5]}    ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝ {COLOR_RESET}
 {COLOR_YELLOW}       Advanced Image Encryption Tool v2.0{COLOR_RESET}
     """
-    # Simple animation effect
     for i in range(len(banner)):
         sys.stdout.write(banner[i])
         sys.stdout.flush()
-        time.sleep(0.005)  # Faster typing effect
+        time.sleep(0.005)
     print()
-    # Display developer credit
     print(f"{COLOR_CYAN}{'─' * 50}{COLOR_RESET}")
     print(f"{COLOR_BRIGHT_YELLOW}      Developed by Ashok (Nickname: NeospectraX){COLOR_RESET}")
     print(f"{COLOR_CYAN}{'─' * 50}{COLOR_RESET}\n")
@@ -525,10 +344,8 @@ def draw_menu():
             "[bold cyan]╠════════════════════════════════════════════╣[/bold cyan]",
             "[bold cyan]║ [bold green][1] Encrypt Image                          [/bold green]║[/bold cyan]",
             "[bold cyan]║ [bold green][2] Decrypt Image                          [/bold green]║[/bold cyan]",
-            "[bold cyan]║ [bold green][3] Stego Embed (Hide Image)               [/bold green]║[/bold cyan]",
-            "[bold cyan]║ [bold green][4] Stego Extract (Reveal)                 [/bold green]║[/bold cyan]",
-            "[bold cyan]║ [bold green][5] View Program Info                      [/bold green]║[/bold cyan]",
-            "[bold cyan]║ [bold red][6] Exit                                   [/bold red]║[/bold cyan]",
+            "[bold cyan]║ [bold green][3] View Program Info                      [/bold green]║[/bold cyan]",
+            "[bold cyan]║ [bold red][4] Exit                                   [/bold red]║[/bold cyan]",
             "[bold cyan]╚════════════════════════════════════════════╝[/bold cyan]"
         ]
         for line in menu_box:
@@ -539,32 +356,25 @@ def draw_menu():
         print("╠════════════════════════════════════════════╣")
         print("║ [1] Encrypt Image                          ║")
         print("║ [2] Decrypt Image                          ║")
-        print("║ [3] Stego Embed (Hide Image)               ║")
-        print("║ [4] Stego Extract (Reveal)                 ║")
-        print("║ [5] View Program Info                      ║")
-        print("║ [6] Exit                                   ║")
+        print("║ [3] View Program Info                      ║")
+        print("║ [4] Exit                                   ║")
         print("╚════════════════════════════════════════════╝")
 
 def display_info():
     info_text = """
 About Pixel Encryption Tool
 
-This tool provides several ways to secure your images:
+This tool provides a way to secure your images:
 
 1. Encryption: Scrambles and encrypts images using:
    - Arnold Cat Map (pixel scrambling)
    - AES-256 encryption
    - Base64 encoding
 
-2. Steganography: Hides encrypted images inside other images
-   - Uses LSB (Least Significant Bit) technique
-   - Secret image is encrypted before hiding
-
 Important Tips:
 - Always remember your encryption key!
 - When decrypting, use the same key and iterations used for encryption
 - Larger images may take longer to process
-- For steganography, cover image should be larger than secret image
 
 Troubleshooting:
 - If decryption fails, double-check your key and iteration count
@@ -581,27 +391,25 @@ Troubleshooting:
         print("="*50)
 
 def main():
-    # Clear terminal and display banner
     os.system('cls' if os.name == 'nt' else 'clear')
     display_banner()
     
     while True:
         draw_menu()
-        choice = console.input("Select an option (1-6): ")
+        choice = console.input("Select an option (1-4): ")
         
-        if choice == "6":
+        if choice == "4":
             console.print("Exiting... Stay secure!")
             break
             
-        if choice == "5":
+        if choice == "3":
             display_info()
             console.input("Press Enter to continue...")
             continue
         
-        if choice in ["1", "2", "3", "4"]:
+        if choice in ["1", "2"]:
             print("="*40)
             
-            # Input validation for image paths
             while True:
                 input_path = console.input("Enter input image path: ")
                 if not input_path:
@@ -619,7 +427,6 @@ def main():
                     continue
                 break
                 
-            # Key validation
             while True:
                 key = console.input("Enter encryption key: ")
                 if not key or len(key) < 4:
@@ -627,7 +434,6 @@ def main():
                     continue
                 break
                 
-            # Iterations validation
             while True:
                 iterations = console.input("Enter number of iterations (1-100): ")
                 try:
@@ -639,19 +445,10 @@ def main():
                 except ValueError:
                     console.print("Please enter a valid number")
             
-            secret_path = None
-            if choice == "3":
-                while True:
-                    secret_path = console.input("Enter secret image path: ")
-                    if not os.path.exists(secret_path):
-                        console.print(f"File not found: {secret_path}")
-                        continue
-                    break
-
-            modes = {"1": "encrypt", "2": "decrypt", "3": "stego_embed", "4": "stego_extract"}
+            modes = {"1": "encrypt", "2": "decrypt"}
             console.print("Processing... Please wait...")
             
-            success = process_image(input_path, output_path, key, iterations, modes[choice], secret_path)
+            success = process_image(input_path, output_path, key, iterations, modes[choice])
             
             if success:
                 console.print(f"Operation completed! Saved to {output_path}")
